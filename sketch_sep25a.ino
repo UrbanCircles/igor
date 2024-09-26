@@ -25,7 +25,7 @@ unsigned long previousMillis = 0;  // For counting logic
 int elapsedMinutes = 0;
 bool isCounting = false;
 unsigned long buttonDebounceTime = 0;
-const unsigned long buttonDebounceDelay = 200;  // Debounce delay
+const unsigned long buttonDebounceDelay = 800;  // Debounce delay
 
 // Rotary encoder debounce variables
 unsigned long lastRotaryTime = 0;
@@ -42,6 +42,7 @@ void setup() {
   initHardware();
   initDisplay();
   updateDisplay();
+  Serial.println("Setup complete, starting loop...");
 }
 
 //=========================================================
@@ -78,7 +79,7 @@ void initDisplay() {
     for (;;);
   }
   display.clearDisplay(); 
-  Serial.println("Initial setup complete. Ready to debug.");
+  Serial.println("Display initialized.");
 }
 
 //=========================================================
@@ -129,42 +130,6 @@ void updateDisplay() {
 }
 
 //=========================================================
-// Rotary Encoder Rotation Detection
-int getRotation() {
-  static int previousCLK = digitalRead(CLK);
-  int currentCLK = digitalRead(CLK);
-  
-  if (currentCLK == LOW && previousCLK == HIGH && (millis() - lastRotaryTime > rotaryDebounceDelay)) {
-    lastRotaryTime = millis();  // Debounce
-    int DTValue = digitalRead(DT);  // Read DT to determine direction
-
-    previousCLK = currentCLK;  // Update previous CLK for next iteration
-
-    return (DTValue != currentCLK) ? 1 : -1;  // Clockwise or counterclockwise
-  }
-  
-  previousCLK = currentCLK;
-  return 0;  // No rotation
-}
-
-//=========================================================
-// Handle rotary input for menu and countdown selection
-void handleRotaryInput() {
-  int rotation = getRotation();
-  if (rotation == 0 || currentState == IDLE) return;
-
-  lastActivityTime = millis();  // Reset inactivity timer
-  
-  if (currentState == MENU) {
-    menuIndex = (menuIndex + rotation + 3) % 3;  // Update for 3 menu options: UP, DOWN, Reset
-    updateDisplay();
-  } else if (currentState == SELECTING_DOWN_DURATION) {
-    countdownValue = max(1, countdownValue + rotation);
-    updateDisplay();
-  }
-}
-
-//=========================================================
 // Detect button presses with debounce logic
 bool buttonPressed() {
   if (digitalRead(SW) == LOW && (millis() - buttonDebounceTime > buttonDebounceDelay)) {
@@ -178,7 +143,7 @@ bool buttonPressed() {
 //=========================================================
 // Handle button presses and manage state transitions
 void handleButtonPresses(unsigned long currentMillis) {
-  if (!buttonPressed() || currentState == IDLE) return;
+  if (!buttonPressed()) return;
 
   switch (currentState) {
     case MENU:
@@ -212,6 +177,7 @@ void startCountingUp() {
   currentState = COUNTING_UP;
   elapsedMinutes = 0;
   isCounting = true;
+  lastActivityTime = millis();  // Reset inactivity timer
   Serial.println("Counting UP started.");
 }
 
@@ -220,6 +186,7 @@ void startCountingUp() {
 void startSelectingDownDuration() {
   currentState = SELECTING_DOWN_DURATION;
   countdownValue = 20;
+  lastActivityTime = millis();  // Reset inactivity timer
   Serial.println("Selecting DOWN duration.");
 }
 
@@ -229,6 +196,7 @@ void confirmCountdownSelection() {
   initialCountdownValue = countdownValue;
   currentState = COUNTING_DOWN;
   isCounting = true;
+  lastActivityTime = millis();  // Reset inactivity timer
   Serial.print("Counting DOWN started with "); Serial.print(countdownValue); Serial.println(" minutes.");
 }
 
@@ -270,6 +238,7 @@ void handleCounting(unsigned long currentMillis) {
   if (currentState == COUNTING_UP) {
     elapsedMinutes++;
     updateDisplay();
+    Serial.print("Counting UP: "); Serial.println(elapsedMinutes);
   } else if (currentState == COUNTING_DOWN) {
     countdownValue--;
     if (countdownValue <= 0) {
@@ -277,46 +246,10 @@ void handleCounting(unsigned long currentMillis) {
       successAnimation();
       currentState = MENU;
       isCounting = false;
+      Serial.println("Countdown finished, returning to MENU.");
     }
     updateDisplay();
-  }
-}
-
-//=========================================================
-// Handle inactivity and switch to IDLE if necessary
-void handleInactivity(unsigned long currentMillis) {
-  // Check if the user is in the MENU or selecting countdown duration mode
-  if ((currentState == MENU || currentState == SELECTING_DOWN_DURATION) && 
-      (currentMillis - lastActivityTime > inactivityLimit)) {
-    if (currentState != IDLE) {
-      currentState = IDLE;
-      idleStartTime = millis();  // Record when IDLE mode starts
-      updateDisplay();
-      Serial.println("IDLE state entered due to inactivity.");
-    }
-  }
-  
-  // Check if the user has been in IDLE for more than 30 minutes and turn off the display
-  if (currentState == IDLE && !displayOff && (currentMillis - idleStartTime > displayOffTimeLimit)) {
-    displayOff = true;
-    display.ssd1306_command(SSD1306_DISPLAYOFF);  // Turn off the display
-    Serial.println("Display turned off after 30 minutes of IDLE.");
-  }
-
-  // Exit IDLE if any rotary or button action happens
-  if (currentState == IDLE && (getRotation() != 0 || buttonPressed())) {
-    currentState = MENU;
-    lastActivityTime = millis();
-    
-    // Turn the display back on if it was off
-    if (displayOff) {
-      display.ssd1306_command(SSD1306_DISPLAYON);
-      displayOff = false;
-      Serial.println("Display turned back on.");
-    }
-
-    updateDisplay();
-    Serial.println("Exiting IDLE mode. Back to MENU.");
+    Serial.print("Counting DOWN: "); Serial.println(countdownValue);
   }
 }
 
@@ -347,3 +280,113 @@ void successAnimation() {
   display.clearDisplay();
   display.display();
 }
+
+//=========================================================
+// Rotary Encoder Rotation Detection
+int getRotation() {
+  static int previousCLK = digitalRead(CLK);
+  int currentCLK = digitalRead(CLK);
+  
+  if (currentCLK == LOW && previousCLK == HIGH && (millis() - lastRotaryTime > rotaryDebounceDelay)) {
+    lastRotaryTime = millis();  // Debounce
+    int DTValue = digitalRead(DT);  // Read DT to determine direction
+
+    previousCLK = currentCLK;  // Update previous CLK for next iteration
+
+    return (DTValue != currentCLK) ? 1 : -1;  // Clockwise or counterclockwise
+  }
+  
+  previousCLK = currentCLK;
+  return 0;  // No rotation
+}
+
+//=========================================================
+// Handle rotary input for menu and countdown selection
+void handleRotaryInput() {
+  int rotation = getRotation();
+  if (rotation == 0) return;  // No rotation detected
+  
+  lastActivityTime = millis();  // Reset inactivity timer on any valid rotation
+  Serial.print(millis());  // Print the current time in milliseconds
+  Serial.print(" - Rotation detected, activity timer reset. Rotation: ");
+  Serial.println(rotation);
+
+  if (currentState == MENU) {
+    menuIndex = (menuIndex + rotation + 3) % 3;  // Update for 3 menu options: UP, DOWN, Reset
+    updateDisplay();
+    Serial.print(millis());  // Print the current time in milliseconds
+    Serial.print(" - Menu option: "); Serial.println(menuOptions[menuIndex]);
+  } else if (currentState == SELECTING_DOWN_DURATION) {
+    countdownValue = max(1, countdownValue + rotation);
+    updateDisplay();
+    Serial.print(millis());  // Print the current time in milliseconds
+    Serial.print(" - Countdown value: "); Serial.println(countdownValue);
+  }
+}
+//=========================================================
+// Handle inactivity and switch to IDLE if necessary
+void handleInactivity(unsigned long currentMillis) {
+  // Comment out frequent serial prints to improve performance
+  /*
+  Serial.print(millis());
+  Serial.print(" - Current time (millis): ");
+  Serial.println(currentMillis);
+  
+  Serial.print(millis());
+  Serial.print(" - Last activity time (millis): ");
+  Serial.println(lastActivityTime);
+  */
+
+  // Make sure the subtraction does not cause an overflow/underflow
+  if (currentMillis >= lastActivityTime) {
+    unsigned long timeSinceLastActivity = currentMillis - lastActivityTime;
+
+    /*
+    Serial.print(millis());
+    Serial.print(" - Time since last activity (ms): ");
+    Serial.println(timeSinceLastActivity);
+    */
+
+    // Check if the user is in the MENU or selecting countdown duration mode
+    if ((currentState == MENU || currentState == SELECTING_DOWN_DURATION) && 
+        (timeSinceLastActivity > inactivityLimit)) {
+      if (currentState != IDLE) {
+        currentState = IDLE;
+        idleStartTime = millis();  // Record when IDLE mode starts
+        updateDisplay();
+        Serial.print(millis());  // Print the current time in milliseconds
+        Serial.println(" - IDLE state entered due to inactivity.");
+      }
+    }
+  } else {
+    // Comment out warning to reduce unnecessary serial prints
+    // Serial.println(" - Warning: currentMillis is less than lastActivityTime!");
+  }
+
+  // Check if the user has been in IDLE for more than 30 minutes and turn off the display
+  if (currentState == IDLE && !displayOff && (currentMillis - idleStartTime > displayOffTimeLimit)) {
+    displayOff = true;
+    display.ssd1306_command(SSD1306_DISPLAYOFF);  // Turn off the display
+    Serial.print(millis());  // Print the current time in milliseconds
+    Serial.println(" - Display turned off after 30 minutes of IDLE.");
+  }
+
+  // Exit IDLE if any rotary or button action happens
+  if (currentState == IDLE && (getRotation() != 0 || buttonPressed())) {
+    currentState = MENU;
+    lastActivityTime = millis();  // Reset inactivity timer upon exiting IDLE
+    
+    // Turn the display back on if it was off
+    if (displayOff) {
+      display.ssd1306_command(SSD1306_DISPLAYON);
+      displayOff = false;
+      Serial.print(millis());  // Print the current time in milliseconds
+      Serial.println(" - Display turned back on.");
+    }
+
+    updateDisplay();
+    Serial.print(millis());  // Print the current time in milliseconds
+    Serial.println(" - Exiting IDLE mode. Back to MENU.");
+  }
+}
+
