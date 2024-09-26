@@ -16,6 +16,9 @@ Bonus: it's cheap to put together and highly hackable. I wrote the code in a mod
 - **Manual Timer Reset:** Reset your total focus time using a simple menu option so you can start afresh. Unplugging the device also achieves this - nothing is permanent, we have to keep performing!
 - **Cute hats that you can swap:** Design your own rotary encoder knobs, ney - hats, or download some that I made. Add some personality to your assistant, be it a British butler, a French concierge, or Italian enforcer, etc. have some fun with this. And make sure you give it a name.
 
+![_DSC0945 Large](https://github.com/user-attachments/assets/ef5a7adf-0809-4d12-9821-14966fce223a)
+
+
 ## BOM
 
 - Adafruit SSD1306 OLED Display (128x64)
