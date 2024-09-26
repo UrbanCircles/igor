@@ -46,7 +46,7 @@ There are only 3 components to this:
 - The faceplate - the OLED slides in (make sure the display is nicely squared - the slide should allow some wiggle room, as the tolerances on these displays are quite bad but hey, it's really cheap).
 - The hat - this is the knob to rotate and press on. It fits on top of the rotary encoder, with the key as a guide.
 
-The orientation of parts on the printer's bed matters - only the hats will need internal supports because of the interface with the rotary encoder. All else prints easily with normal PLA (but you can get more exotic - people share your creations!).
+The orientation of parts on the printer's bed matters - only some hats will need internal supports because of the interface with the rotary encoder. All else prints easily with normal PLA (but you can get more exotic - people share your creations!).
 
 Do play with the dimensions - tolerances (around 0.2-0.3mm) work very well for our printers and achieve a satisfying fit, but they require some adjustment/scaling for your setup.
 
