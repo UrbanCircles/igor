@@ -1,0 +1,4 @@
+Some of the files may contain multiple parts (e.g the entire assembly) - you need to Split them to Objects in your slicer, in order to place them correctly on the plate.
+
+This is where this option is in BambuSlicer for example: Right click on model -> Split -> To Objects.
+
