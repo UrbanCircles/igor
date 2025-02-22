@@ -1,5 +1,6 @@
 #include <Wire.h>
 #include <Adafruit_SSD1306.h>
+#include "KY040.h"
 
 //-----------------------------------------------
 Adafruit_SSD1306 display(128, 64, &Wire, D4);
@@ -8,6 +9,12 @@ Adafruit_SSD1306 display(128, 64, &Wire, D4);
 #define CLK    D6
 #define DT     D7
 #define SW     D4
+
+
+KY040 g_rotaryEncoder(CLK,DT);
+// Set a flag to indicate that the display should be updated
+volatile bool update_display = false;
+
 
 //-----------------------------------------------
 int flowMinutes = 0;   // Total flow minutes
@@ -48,9 +55,8 @@ void setup() {
 //=========================================================
 void loop() {
   unsigned long currentMillis = millis();
-  
-  // Handle rotary encoder input
-  handleRotaryInput();
+
+  handleScreenUpdate();
 
   // Handle button presses and states
   handleButtonPresses(currentMillis);
@@ -65,9 +71,10 @@ void loop() {
 //=========================================================
 // Initialize hardware pins and serial communication
 void initHardware() {
-  pinMode(CLK, INPUT);
-  pinMode(DT, INPUT);
   pinMode(SW, INPUT);
+  // Set interrupts for CLK and DT
+  attachInterrupt(digitalPinToInterrupt(CLK), ISR_rotaryEncoder, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(DT), ISR_rotaryEncoder, CHANGE);
   Serial.begin(9600);
 }
 
@@ -282,47 +289,36 @@ void successAnimation() {
 }
 
 //=========================================================
-// Rotary Encoder Rotation Detection
-int getRotation() {
-  static int previousCLK = digitalRead(CLK);
-  int currentCLK = digitalRead(CLK);
-  
-  if (currentCLK == LOW && previousCLK == HIGH && (millis() - lastRotaryTime > rotaryDebounceDelay)) {
-    lastRotaryTime = millis();  // Debounce
-    int DTValue = digitalRead(DT);  // Read DT to determine direction
-
-    previousCLK = currentCLK;  // Update previous CLK for next iteration
-
-    return (DTValue != currentCLK) ? 1 : -1;  // Clockwise or counterclockwise
+// ISR to handle the interrupts for CLK and DT
+ICACHE_RAM_ATTR void ISR_rotaryEncoder() {
+  if (currentState == IDLE) {
+    exitIdle();
   }
   
-  previousCLK = currentCLK;
-  return 0;  // No rotation
-}
-
-//=========================================================
-// Handle rotary input for menu and countdown selection
-void handleRotaryInput() {
-  int rotation = getRotation();
-  if (rotation == 0) return;  // No rotation detected
+  int rotation = 0;
+  // Process pin states for CLK and DT
+  switch (g_rotaryEncoder.getRotation()) {   
+    case KY040::CLOCKWISE:
+      rotation = 1;
+      break;
+    case KY040::COUNTERCLOCKWISE:
+      rotation = -1;
+      break;
+  }
+  if (rotation == 0) {
+    return;
+  }
   
-  lastActivityTime = millis();  // Reset inactivity timer on any valid rotation
-  Serial.print(millis());  // Print the current time in milliseconds
-  Serial.print(" - Rotation detected, activity timer reset. Rotation: ");
-  Serial.println(rotation);
-
   if (currentState == MENU) {
     menuIndex = (menuIndex + rotation + 3) % 3;  // Update for 3 menu options: UP, DOWN, Reset
-    updateDisplay();
-    Serial.print(millis());  // Print the current time in milliseconds
-    Serial.print(" - Menu option: "); Serial.println(menuOptions[menuIndex]);
-  } else if (currentState == SELECTING_DOWN_DURATION) {
-    countdownValue = max(1, countdownValue + rotation);
-    updateDisplay();
-    Serial.print(millis());  // Print the current time in milliseconds
-    Serial.print(" - Countdown value: "); Serial.println(countdownValue);
+    update_display = true;
   }
+  else if (currentState == SELECTING_DOWN_DURATION) {
+    countdownValue = max(1, countdownValue + rotation);
+    update_display = true;
+  }  
 }
+
 //=========================================================
 // Handle inactivity and switch to IDLE if necessary
 void handleInactivity(unsigned long currentMillis) {
@@ -372,21 +368,36 @@ void handleInactivity(unsigned long currentMillis) {
   }
 
   // Exit IDLE if any rotary or button action happens
-  if (currentState == IDLE && (getRotation() != 0 || buttonPressed())) {
-    currentState = MENU;
-    lastActivityTime = millis();  // Reset inactivity timer upon exiting IDLE
-    
-    // Turn the display back on if it was off
-    if (displayOff) {
-      display.ssd1306_command(SSD1306_DISPLAYON);
-      displayOff = false;
-      Serial.print(millis());  // Print the current time in milliseconds
-      Serial.println(" - Display turned back on.");
-    }
-
-    updateDisplay();
-    Serial.print(millis());  // Print the current time in milliseconds
-    Serial.println(" - Exiting IDLE mode. Back to MENU.");
+  // if (currentState == IDLE && (getRotation() != 0 || buttonPressed())) {
+  if (currentState == IDLE && (buttonPressed())) {
+    exitIdle();
   }
 }
 
+void exitIdle() {
+  currentState = MENU;
+  lastActivityTime = millis();  // Reset inactivity timer upon exiting IDLE
+  
+  // Turn the display back on if it was off
+  if (displayOff) {
+    display.ssd1306_command(SSD1306_DISPLAYON);
+    displayOff = false;
+    Serial.print(millis());  // Print the current time in milliseconds
+    Serial.println(" - Display turned back on.");
+  }
+
+  updateDisplay();
+  Serial.print(millis());  // Print the current time in milliseconds
+  Serial.println(" - Exiting IDLE mode. Back to MENU.");
+}
+
+//=========================================================
+// Update the display if the update_display flag is set (encoder signal)
+void handleScreenUpdate() {
+  if (update_display) {
+    updateDisplay();
+    cli();
+    update_display = false;
+    sei();
+  }
+}
