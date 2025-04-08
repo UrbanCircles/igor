@@ -26,6 +26,17 @@ Bonus: it's cheap to put together and highly hackable. I wrote the code in a mod
 
 ![_DSC0945 Large](https://github.com/user-attachments/assets/ef5a7adf-0809-4d12-9821-14966fce223a)
 
+## Sound notification (v1.5)
+- **Sound notification:** small and customizable sound notifications that play with every click and at the end of any open/focus session. Sound notifications can be disable from the menu.
+
+> [!NOTE]  
+> If you prefer the original version of the project without modification you can find a copy of it inside the 'igor_original' folder
+
+Requires a piezo buzzer (PS1240, SFM-27 or any type) available on every amazon in set ~3-6 $/£/€
+| Component            | Pin | Wiring| 
+|----------------------|-----|-------------|
+| Buzzer    		   | D8  | Connect one pin to D8 and the other to GND
+
 
 ## BOM
 
@@ -97,11 +108,12 @@ Basically, there is no initial setup... we're ready when you are!
 
 #### 2. Main Menu
 
-The main menu offers three options:
+The main menu offers four options:
 
 - **UP:** Start counting focus time upward. Great for open-ended focus sessions.
 - **DOWN:** Select a countdown duration and track your focus session as it counts down to zero.
 - **Reset:** Manually reset your total focus time to zero. This won't affect current sessions but will clear the accumulated flow minutes shown on the top of the screen.
+- **Volume on/off: (1.5v)** Enable or disable sound notification for click, open and focused session.
 
 #### 3. Count UP Mode
 
@@ -126,6 +138,11 @@ If the timer remains in the menu or selection screen without user interaction fo
 After 30 minutes of inactivity, the display turns off entirely - this is to conserve energy.  
 Simply press the button to exit IDLE mode and return to the menu.
 
+#### 7. Sound notification (v1.5)
+Sound can be enabled or disabled for the related option in the menu. It's possible to customize sounds used for click, open and focused session directly from the script, specifying note and their duration. Sounds can be created directly online with tool such as https://tone-maker.vercel.app/. Other useful links for sounds creation:
+* https://docs.arduino.cc/built-in-examples/digital/toneMelody/ 
+* https://github.com/robsoncouto/arduino-songs
+
 ### Example Workflow
 
 - Select **UP** to start timing a work session.
@@ -140,7 +157,7 @@ https://youtu.be/Wko0zgRGtPI
 
 Here are a bunch of features I think might be cool to try out. Please add your ideas as well. Also, please help me by submitting code!! I'm a designer, not a programmer and could really use some of your talents to bring this project alive.
 
-- [ ] Add sound notifications
+- [X] Add sound notifications
 - [ ] Get internet time via Wifi + portal, since this is a ESP module
 - [ ] More animations and transitions
 - [ ] More modes available (any ideas?)

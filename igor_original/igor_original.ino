@@ -1,20 +1,18 @@
 #include <Wire.h>
 #include <Adafruit_SSD1306.h>
-#include "utilities.h"
-
-// generic pins for generic ESP8266 if using DX pins does not work
-//-----------------------------------------------
-Adafruit_SSD1306 display(128, 64, &Wire, D4); // or -1
 
 //-----------------------------------------------
-#define CLK D6 //or 12 
-#define DT  D7 //or 13
-#define SW  D4 //or 2
+Adafruit_SSD1306 display(128, 64, &Wire, D4);
+
+//-----------------------------------------------
+#define CLK    D6
+#define DT     D7
+#define SW     D4
 
 //-----------------------------------------------
 int flowMinutes = 0;   // Total flow minutes
-int menuIndex = 0;     // 0 for UP, 1 for DOWN, 2 for Reset, 3 for SoundOptions
-String menuOptions[4] = {"UP", "DOWN", "Reset", "SoundOptions"};  // Menu labels - note "SoundOptions" is replaced by bitmap
+int menuIndex = 0;     // 0 for UP, 1 for DOWN, 2 for Reset
+String menuOptions[3] = {"UP", "DOWN", "Reset"};  // Label reset option as "Reset"
 unsigned long lastActivityTime = 0;  // For inactivity detection
 const unsigned long inactivityLimit = 3 * 60000;  // 3 minutes in milliseconds
 
@@ -38,33 +36,6 @@ const unsigned long displayOffTimeLimit = 30 * 60000;  // 30 minutes in millisec
 
 unsigned long idleStartTime = 0;  // Track when IDLE mode starts
 bool displayOff = false;  // Track if the display is off
-
-
-//-----------------------------------------------
-// Sound specific definition 
-// - BZ: buzzer pin
-// - struct tone - structure for melody and duration definition
-// - open_session_end: struct tone - tone played when open session ends (UP)
-// - focused_session_end: struct tone - tone played when focused session ends (DOWN)
-// - click_melody: struct tone - tone played when button is pressed (UP, DOWN, Reset)
-// - isVolumeOn: bool - enable/disable sound
-
-#define BZ D8 //or 15 - buzzer pin
-
-struct tone {
-  int melody[5];
-  int duration[5];
-  int len;
-};
-
-// define your custome melody here
-struct tone open_session_end = {{NOTE_E5, NOTE_B4, NOTE_C5, NOTE_D5}, {8, 8, 8, 8}, 4};
-struct tone focused_session_end = {{NOTE_GS4, NOTE_GS4, NOTE_AS4}, {8, 8, 8}, 3};
-struct tone click_melody = {{NOTE_DS8},{8}, 1};
-
-bool isVolumeOn = true;
-
-
 
 //=========================================================
 void setup() {  
@@ -139,16 +110,7 @@ void updateDisplay() {
   String mainRowText;
   
   if (currentState == MENU) {
-    mainRowText = menuOptions[menuIndex];  // Display UP, DOWN, Reset or SoundOptions in the menu
-    if (mainRowText == "SoundOptions"){
-      display.clearDisplay();
-      if (isVolumeOn)
-        display.drawBitmap(32,0, bitmap_volume_off, 128, 64, WHITE);
-      else
-        display.drawBitmap(32,0, bitmap_volume_on, 128, 64, WHITE);
-      display.display();
-      return;
-    }
+    mainRowText = menuOptions[menuIndex];  // Display UP, DOWN, or Reset in the menu
   } else if (currentState == COUNTING_UP) {
     mainRowText = String(elapsedMinutes);  // Display counting up minutes
   } else if (currentState == COUNTING_DOWN || currentState == SELECTING_DOWN_DURATION) {
@@ -191,15 +153,11 @@ void handleButtonPresses(unsigned long currentMillis) {
         startSelectingDownDuration();
       } else if (menuIndex == 2) {  // Reset selected
         resetFlowMinutes();  // Reset the total focus time to 0
-      } else if (menuIndex == 3) {
-        setSoundOptions(); // Set sound options
       }
-      if (isVolumeOn) playSound(click_melody);
       break;
       
     case SELECTING_DOWN_DURATION:
       confirmCountdownSelection();
-      if (isVolumeOn) playSound(click_melody);
       break;
 
     case COUNTING_UP:
@@ -246,7 +204,6 @@ void confirmCountdownSelection() {
 // Stop counting up and return to menu
 void stopCountingUp() {
   flowMinutes += elapsedMinutes;
-  if (isVolumeOn) playSound(open_session_end);
   successAnimation();
   currentState = MENU;
   isCounting = false;
@@ -257,7 +214,6 @@ void stopCountingUp() {
 // Stop counting down and return to menu
 void stopCountingDown() {
   flowMinutes += (initialCountdownValue - countdownValue);
-  if (isVolumeOn) playSound(focused_session_end);
   successAnimation();
   currentState = MENU;
   isCounting = false;
@@ -287,7 +243,6 @@ void handleCounting(unsigned long currentMillis) {
     countdownValue--;
     if (countdownValue <= 0) {
       flowMinutes += initialCountdownValue;
-      if (isVolumeOn) playSound(focused_session_end);
       successAnimation();
       currentState = MENU;
       isCounting = false;
@@ -307,7 +262,7 @@ void successAnimation() {
   for (int radius = 2; radius <= 30; radius += 2) {
     display.drawCircle(centerX, centerY, radius, WHITE);
     display.display();
-    delay(80);
+    delay(100);
 
     if (radius % 4 == 0) {
       display.clearDisplay();
@@ -321,7 +276,7 @@ void successAnimation() {
   display.setCursor(20, 20);
   display.print("SUCCESS!");
   display.display();
-  delay(800);
+  delay(1000);
   display.clearDisplay();
   display.display();
 }
@@ -357,7 +312,7 @@ void handleRotaryInput() {
   Serial.println(rotation);
 
   if (currentState == MENU) {
-    menuIndex = (menuIndex + rotation + 4) % 4;  // Update for 4 menu options: UP, DOWN, Reset, SoundOptions
+    menuIndex = (menuIndex + rotation + 3) % 3;  // Update for 3 menu options: UP, DOWN, Reset
     updateDisplay();
     Serial.print(millis());  // Print the current time in milliseconds
     Serial.print(" - Menu option: "); Serial.println(menuOptions[menuIndex]);
@@ -435,24 +390,3 @@ void handleInactivity(unsigned long currentMillis) {
   }
 }
 
-  void playSound(const struct tone &sound){
-    // iterate over the notes of the melody:
-    for (int thisNote = 0; thisNote < sound.len; thisNote++) {
-      // to calculate the note duration, take one second divided by the note type.
-      //e.g. quarter note = 1000 / 4, eighth note = 1000/8, etc.
-      int noteDuration = 1000 / sound.duration[thisNote];
-      tone(BZ, sound.melody[thisNote], noteDuration);
-
-      // to distinguish the notes, set a minimum time between them.
-      // the note's duration + 30% seems to work well:
-      int pauseBetweenNotes = noteDuration * 1.15;
-      delay(pauseBetweenNotes);
-      // stop the tone playing:
-      noTone(BZ);
-    }
-    
-  }
-
-  void setSoundOptions(){
-    isVolumeOn = !isVolumeOn;
-  }
