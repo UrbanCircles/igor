@@ -1,5 +1,7 @@
+#include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_SSD1306.h>
+
 
 //-----------------------------------------------
 Adafruit_SSD1306 display(128, 64, &Wire, D4);
@@ -38,6 +40,24 @@ unsigned long idleStartTime = 0;  // Track when IDLE mode starts
 bool displayOff = false;  // Track if the display is off
 
 //=========================================================
+void initHardware();
+void initDisplay();
+void updateDisplay();
+bool buttonPressed();
+void handleButtonPresses(unsigned long currentMillis);
+void startCountingUp();
+void startSelectingDownDuration();
+void confirmCountdownSelection();
+void stopCountingUp();
+void stopCountingDown();
+void resetFlowMinutes();
+void handleCounting(unsigned long currentMillis);
+void successAnimation();
+int  getRotation();
+void handleRotaryInput();
+void handleInactivity(unsigned long currentMillis);
+
+//=========================================================
 void setup() {  
   initHardware();
   initDisplay();
@@ -65,9 +85,9 @@ void loop() {
 //=========================================================
 // Initialize hardware pins and serial communication
 void initHardware() {
-  pinMode(CLK, INPUT);
-  pinMode(DT, INPUT);
-  pinMode(SW, INPUT);
+  pinMode(CLK, INPUT_PULLUP);
+  pinMode(DT, INPUT_PULLUP);
+  pinMode(SW, INPUT_PULLUP);
   Serial.begin(9600);
 }
 
@@ -262,12 +282,12 @@ void successAnimation() {
   for (int radius = 2; radius <= 30; radius += 2) {
     display.drawCircle(centerX, centerY, radius, WHITE);
     display.display();
-    delay(100);
+    delay(5);
 
     if (radius % 4 == 0) {
       display.clearDisplay();
       display.display();
-      delay(2);
+      delay(1);
     }
   }
   
