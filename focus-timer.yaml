@@ -1,0 +1,274 @@
+esphome:
+  name: focus-timer
+  friendly_name: Focus Timer
+
+esp8266:
+  board: d1_mini
+
+logger:
+
+api:
+  encryption:
+    key: "xxx"
+
+ota:
+  platform: esphome
+  password: "xxx"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  ap:
+    ssid: "Focus-Timer Fallback Hotspot"
+    password: "12345678"
+
+captive_portal:
+
+globals:
+  - id: menu_index
+    type: int
+    initial_value: '0'
+  - id: countdown_value
+    type: int
+    initial_value: '20'
+  - id: elapsed_minutes
+    type: int
+    initial_value: '0'
+  - id: flow_minutes
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: timer_running
+    type: bool
+    initial_value: 'false'
+  - id: setting_down_value
+    type: bool
+    initial_value: 'false'
+  - id: sleep_mode
+    type: bool
+    initial_value: 'false'
+
+button:
+  - platform: template
+    name: "Reset Flow"
+    id: reset_flow_button
+    on_press:
+      then:
+        - script.execute: reset_flow
+
+sensor:
+  - platform: rotary_encoder
+    id: encoder
+    pin_a: D6
+    pin_b: D7
+    resolution: 1
+    on_clockwise:
+      - lambda: |-
+          static unsigned long last_time = 0;
+          unsigned long now = millis();
+          if (now - last_time > 30) {
+            if (id(sleep_mode)) {
+              id(sleep_mode) = false;
+              id(menu_index) = 0;
+            } else if (!id(timer_running)) {
+              if (id(setting_down_value)) {
+                if (id(countdown_value) > 1) id(countdown_value) -= 1;  // INVERTIERT
+              } else {
+                if (id(menu_index) == 0) {
+                  id(menu_index) = 2;
+                } else {
+                  id(menu_index) -= 1;
+                }
+              }
+            }
+            last_time = now;
+          }
+      - component.update: oled_display
+
+    on_anticlockwise:
+      - lambda: |-
+          static unsigned long last_time = 0;
+          unsigned long now = millis();
+          if (now - last_time > 30) {
+            if (id(sleep_mode)) {
+              id(sleep_mode) = false;
+              id(menu_index) = 0;
+            } else if (!id(timer_running)) {
+              if (id(setting_down_value)) {
+                if (id(countdown_value) < 99) id(countdown_value) += 1;  // INVERTIERT
+              } else {
+                id(menu_index) += 1;
+                if (id(menu_index) > 2) id(menu_index) = 0;
+              }
+            }
+            last_time = now;
+          }
+      - component.update: oled_display
+  - platform: template
+    name: "Flow"
+    id: flow_sensor
+    lambda: |-
+      return (float)id(flow_minutes);
+    update_interval: 10s
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: D4
+      mode: INPUT_PULLUP
+    name: "Encoder Button"
+    on_press:
+      - lambda: |-
+          if (id(sleep_mode)) {
+            id(sleep_mode) = false;
+            id(menu_index) = 0;
+          } else if (!id(timer_running)) {
+            if (id(menu_index) == 0) {
+              id(start_counting_up).execute();
+            } else if (id(menu_index) == 1) {
+              if (!id(setting_down_value)) {
+                id(setting_down_value) = true;
+              } else {
+                id(setting_down_value) = false;
+                id(start_counting_down).execute();
+              }
+            } else if (id(menu_index) == 2) {
+              id(sleep_mode) = true;
+            }
+          } else {
+            id(timer_running) = false;
+            id(menu_index) = 0;
+            id(setting_down_value) = false;
+          }
+      - script.execute: start_inactivity_timer
+      - component.update: oled_display
+
+  - platform: template
+    name: "DND Mode"
+    id: dnd
+    lambda: |-
+      return id(timer_running);
+
+i2c:
+  sda: D2
+  scl: D1
+  scan: true
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    id: oled_display
+    update_interval: 100ms
+    lambda: |-
+      if (id(sleep_mode)) {
+        it.fill(COLOR_OFF);  // Bildschirm komplett schwarz im Sleep-Modus
+        return;              // nichts weiter zeichnen
+      }
+
+      // Flow-Zeile oben zentriert
+      char flow_text[16];
+      sprintf(flow_text, "Flow: %d", id(flow_minutes));
+      int approx_char_width = 10;
+      int flow_width = strlen(flow_text) * approx_char_width;
+      it.print((128 - flow_width) / 2, 0, id(font2), flow_text);
+
+      char buffer[16];
+      if (id(timer_running)) {
+        int minutes = (id(menu_index) == 0) ? id(elapsed_minutes) : id(countdown_value);
+        sprintf(buffer, "%d", minutes);
+        it.printf(64, 40, id(font3), TextAlign::CENTER, buffer);
+      } else if (id(setting_down_value)) {
+        it.fill(COLOR_OFF);
+        it.printf(64, 8, id(font1), TextAlign::TOP_CENTER, "Select min");
+        sprintf(buffer, "%d", id(countdown_value));
+        it.printf(64, 40, id(font3), TextAlign::CENTER, buffer);
+        int underline_width = strlen(buffer) * 30;
+        it.line(64 - underline_width / 2, 40 + 48, 64 + underline_width / 2, 40 + 48);
+      } else {
+        // Dynamisches Menü basierend auf menu_index
+        const char* items[] = {"UP", "DOWN", "SLEEP"};
+        const int item_count = 3;
+
+        int mid = id(menu_index);
+        int top = (mid + item_count - 1) % item_count;
+        int bot = (mid + 1) % item_count;
+
+        it.printf(64, 28, id(font2), TextAlign::CENTER, "%s", items[top]);
+        it.printf(64, 43, id(font2), TextAlign::CENTER, "> %s", items[mid]);
+        it.printf(64, 58, id(font2), TextAlign::CENTER, "%s", items[bot]);
+      }
+
+font:
+  - file: "Roboto.ttf"
+    id: font1
+    size: 12
+  - file: "Roboto.ttf"
+    id: font2
+    size: 16
+  - file: "Roboto.ttf"
+    id: font3
+    size: 48
+
+script:
+  - id: start_counting_up
+    then:
+      - globals.set:
+          id: elapsed_minutes
+          value: '0'
+      - globals.set:
+          id: timer_running
+          value: 'true'
+      - script.execute: counting_up
+
+  - id: counting_up
+    mode: restart
+    then:
+      - delay: 60s
+      - lambda: |-
+          if (id(timer_running)) {
+            id(elapsed_minutes) += 1;
+            id(flow_minutes) += 1;
+          }
+      - script.execute: counting_up
+
+  - id: start_counting_down
+    then:
+      - globals.set:
+          id: timer_running
+          value: 'true'
+      - script.execute: counting_down
+
+  - id: counting_down
+    mode: restart
+    then:
+      - delay: 60s
+      - lambda: |-
+          if (id(timer_running)) {
+            if (id(countdown_value) > 1) {
+              id(countdown_value) -= 1;
+              id(flow_minutes) += 1;
+              id(counting_down).execute();
+            } else {
+              id(timer_running) = false;
+              id(menu_index) = 0;
+              id(setting_down_value) = false;
+            }
+          }
+
+  - id: reset_flow
+    then:
+      - globals.set:
+          id: flow_minutes
+          value: '0'
+
+  - id: start_inactivity_timer
+    mode: restart
+    then:
+      - delay: 2min
+      - lambda: |-
+          if (!id(timer_running) && id(menu_index) >= 0 && id(menu_index) <= 2) {
+            id(sleep_mode) = true;
+          }
+      - component.update: oled_display
