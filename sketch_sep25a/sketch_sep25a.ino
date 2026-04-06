@@ -2,7 +2,7 @@
 #include <Adafruit_SSD1306.h>
 
 //-----------------------------------------------
-Adafruit_SSD1306 display(128, 64, &Wire, D4);
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
 
 //-----------------------------------------------
 #define CLK    D6
@@ -135,6 +135,8 @@ bool buttonPressed() {
   if (digitalRead(SW) == LOW && (millis() - buttonDebounceTime > buttonDebounceDelay)) {
     buttonDebounceTime = millis();  // Debounce
     lastActivityTime = millis();  // Reset inactivity timer
+
+    Serial.println(F("Button pressed"));
     return true;
   }
   return false;
