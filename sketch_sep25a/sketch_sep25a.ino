@@ -1,13 +1,16 @@
 #include <Wire.h>
 #include <Adafruit_SSD1306.h>
+#include "pitches.h"
+
 
 //-----------------------------------------------
-Adafruit_SSD1306 display(128, 64, &Wire, D4);
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
 
 //-----------------------------------------------
 #define CLK    D6
 #define DT     D7
 #define SW     D4
+#define BUZZER D5
 
 //-----------------------------------------------
 int flowMinutes = 0;   // Total flow minutes
@@ -68,6 +71,7 @@ void initHardware() {
   pinMode(CLK, INPUT);
   pinMode(DT, INPUT);
   pinMode(SW, INPUT);
+  digitalWrite(BUZZER, LOW);
   Serial.begin(9600);
 }
 
@@ -135,6 +139,8 @@ bool buttonPressed() {
   if (digitalRead(SW) == LOW && (millis() - buttonDebounceTime > buttonDebounceDelay)) {
     buttonDebounceTime = millis();  // Debounce
     lastActivityTime = millis();  // Reset inactivity timer
+
+    Serial.println(F("Button pressed"));
     return true;
   }
   return false;
@@ -262,25 +268,41 @@ void successAnimation() {
   for (int radius = 2; radius <= 30; radius += 2) {
     display.drawCircle(centerX, centerY, radius, WHITE);
     display.display();
+
+    // short delay for ripple
     delay(100);
 
+    // play a short blip on every 4th radius to accompany the ripple
     if (radius % 4 == 0) {
+      tone(BUZZER, 1000, 80); // blip ~1kHz, 80ms
+      delay(100);
+      noTone(BUZZER);
       display.clearDisplay();
       display.display();
       delay(2);
     }
   }
-  
+
   display.clearDisplay();
   display.setTextSize(2);
   display.setCursor(20, 20);
   display.print("SUCCESS!");
   display.display();
-  delay(1000);
+
+  // short success melody (uses NOTE_* from pitches.h)
+  int melody[] = { NOTE_C5, NOTE_E5, NOTE_G5, NOTE_C6 };
+  int noteDurations[] = { 180, 180, 180, 240 };
+  for (unsigned int i = 0; i < sizeof(melody)/sizeof(melody[0]); i++) {
+    tone(BUZZER, melody[i], noteDurations[i]);
+    delay(noteDurations[i] + 50);
+    noTone(BUZZER);
+  }
+
+  delay(300);
+  noTone(BUZZER);
   display.clearDisplay();
   display.display();
 }
-
 //=========================================================
 // Rotary Encoder Rotation Detection
 int getRotation() {
