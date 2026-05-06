@@ -68,7 +68,7 @@ unsigned long lastActivityTime = 0;
 unsigned long inactivityLimitMs = 3UL * 60000UL;
 unsigned long displayOffTimeLimitMs = 30UL * 60000UL;
 
-enum State { MENU, COUNTING_UP, COUNTING_DOWN, SELECTING_DOWN_DURATION, IDLE, SETTINGS, RESET_CONFIRM, HELP };
+enum State { MENU, COUNTING_UP, COUNTING_DOWN, SELECTING_DOWN_DURATION, IDLE, SETTINGS, SOUND_MENU, RESET_CONFIRM, POWER_OFF_CONFIRM, HELP };
 State currentState = MENU;
 
 enum SetupPage {
@@ -93,10 +93,10 @@ int countdownSeconds = 20 * 60;  // Active countdown in seconds (COUNTING_DOWN o
 int initialCountdownValue = 20;  // Store the countdown value when selected
 unsigned long previousMillis = 0;  // For counting logic
 int elapsedMinutes = 0;
+int elapsedSeconds = 0;
 bool isCounting = false;
 unsigned long buttonDebounceTime = 0;
 const unsigned long buttonDebounceDelay = 300;  // Debounce delay
-bool buttonWasDown = false;
 unsigned long rotaryIgnoreUntilMs = 0;
 const unsigned long rotaryPressGuardDelay = 220;
 unsigned long lastSwitchLowMs = 0;
@@ -116,6 +116,23 @@ bool resetArmed = false;
 unsigned long resetArmedAtMs = 0;
 const unsigned long resetConfirmWindowMs = 3000;
 bool wakeConsumedAction = false;
+bool soundMenuValue = true;
+
+// Post-session IDLE reminder (Idle preset = time after session end without starting a new session)
+bool postSessionReminderPending = false;
+unsigned long sessionEndedAtMs = 0;
+
+// Encoder switch: short vs long press (long opens POWER_OFF_CONFIRM)
+bool switchReadingLow = false;
+bool switchFallingEdge = false;
+bool switchRisingEdge = false;
+unsigned long switchStrokeDownMs = 0;
+bool longPressConsumedThisStroke = false;
+bool pendingShortSwitchClick = false;
+bool switchStrokeUsedForDownClick = false;
+const unsigned long powerLongPressHoldMs = 1500;
+
+bool powerOffChoiceOk = false;  // false = Cancel, true = OK (power off)
 int helpSelectedLine = 0;
 const int helpVisibleLines = 4;
 const char *helpLines[] = {
@@ -125,7 +142,8 @@ const char *helpLines[] = {
   "SOUND: tone on/off",
   "SET: defaults/goal",
   "RESET: confirm",
-  "IDLE: rotate/press"
+  "IDLE: post-session hint",
+  "Long press: turn off?"
 };
 const int helpLineCount = sizeof(helpLines) / sizeof(helpLines[0]);
 
@@ -142,8 +160,11 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
 
+  pollEncoderSwitch(currentMillis);
+
   if (wakeConsumedAction) {
     wakeConsumedAction = false;
+    pendingShortSwitchClick = false;
     handleInactivity(currentMillis);
     return;
   }
@@ -272,6 +293,91 @@ void applyContrastInvert() {
   uint8_t c = levels[contrastLevel % 3];
   display.ssd1306_command(SSD1306_SETCONTRAST);
   display.ssd1306_command(c);
+}
+
+//=========================================================
+void ensureDisplayOn() {
+  if (displayOff) {
+    display.ssd1306_command(SSD1306_DISPLAYON);
+    displayOff = false;
+  }
+}
+
+//=========================================================
+void armPostSessionReminder() {
+  postSessionReminderPending = true;
+  sessionEndedAtMs = millis();
+}
+
+void clearPostSessionReminder() {
+  postSessionReminderPending = false;
+  sessionEndedAtMs = 0;
+}
+
+bool powerLongPressEligible() {
+  if (isCounting) return false;
+  if (currentState == POWER_OFF_CONFIRM || currentState == RESET_CONFIRM) return false;
+  return true;
+}
+
+void pollEncoderSwitch(unsigned long now) {
+  bool low = (digitalRead(SW) == LOW);
+  switchFallingEdge = low && !switchReadingLow;
+  switchRisingEdge = !low && switchReadingLow;
+
+  if (switchFallingEdge) {
+    switchStrokeDownMs = now;
+    longPressConsumedThisStroke = false;
+    switchStrokeUsedForDownClick = false;
+    lastSwitchLowMs = now;
+
+    // During active timers: keep immediate press-to-stop (falling edge), long-press power is disabled.
+    if (isCounting && (now - buttonDebounceTime >= buttonDebounceDelay)) {
+      pendingShortSwitchClick = true;
+      buttonDebounceTime = now;
+      lastActivityTime = now;
+      rotaryIgnoreUntilMs = now + rotaryPressGuardDelay;
+      playButtonClick();
+      switchStrokeUsedForDownClick = true;
+    }
+  }
+
+  if (low && switchReadingLow && !longPressConsumedThisStroke &&
+      powerLongPressEligible() &&
+      (now - switchStrokeDownMs >= powerLongPressHoldMs)) {
+    longPressConsumedThisStroke = true;
+    ensureDisplayOn();
+    powerOffChoiceOk = false;
+    currentState = POWER_OFF_CONFIRM;
+    lastActivityTime = now;
+    rotaryIgnoreUntilMs = now + rotaryPressGuardDelay;
+    updateDisplay();
+  }
+
+  if (switchRisingEdge) {
+    unsigned long dur = now - switchStrokeDownMs;
+    if (switchStrokeUsedForDownClick) {
+      switchStrokeUsedForDownClick = false;
+    } else if (!longPressConsumedThisStroke &&
+               dur >= 40 &&
+               dur < powerLongPressHoldMs &&
+               (now - buttonDebounceTime >= buttonDebounceDelay)) {
+      pendingShortSwitchClick = true;
+      buttonDebounceTime = now;
+      lastActivityTime = now;
+      rotaryIgnoreUntilMs = now + rotaryPressGuardDelay;
+      playButtonClick();
+    }
+    longPressConsumedThisStroke = false;
+  }
+
+  switchReadingLow = low;
+}
+
+bool consumeShortSwitchClick() {
+  if (!pendingShortSwitchClick) return false;
+  pendingShortSwitchClick = false;
+  return true;
 }
 
 //=========================================================
@@ -435,12 +541,18 @@ void updateDisplay() {
   String topRowText;
   String hintText;
 
-  if (currentState == SETTINGS) {
+  if (currentState == MENU) {
+    topRowText = "M:" + String(flowMinutes) + " S:" + String(sessionCount);
+    hintText = "Rotate / Press";
+  } else if (currentState == SETTINGS) {
     const char *titles[] = {
-      "Def", "Idle", "Off", "Anim", "Invert", "Ctrst", "Sess", "Goal", "Pomo", "Break", "Miles", "Exit"
+      "Def", "Idle", "Off", "Anim", "Inv", "Ctrst", "Sess", "Goal", "Pomo", "Brk", "Mile", "Exit"
     };
     topRowText = String(titles[setupPage]) + " " + String(setupPage + 1) + "/" + String((int)SET_PAGE_COUNT);
     hintText = "R:change  P:next";
+  } else if (currentState == SOUND_MENU) {
+    topRowText = "Sound";
+    hintText = "R:change  P:save";
   } else if (currentState == COUNTING_UP) {
     topRowText = "Focus! \x18";
     hintText = "";
@@ -450,21 +562,6 @@ void updateDisplay() {
   } else if (currentState == RESET_CONFIRM) {
     topRowText = "Reset";
     hintText = "Press=Yes  Rotate=No";
-  } else if (currentState == MENU && menuIndex == 3) {
-    topRowText = "Sound";
-    hintText = "Rotate / Press";
-  } else if (currentState == MENU && menuIndex == 4) {
-    topRowText = "Setup";
-    hintText = "Press to edit";
-  } else if (currentState == MENU && menuIndex == 5) {
-    topRowText = "Quick";
-    hintText = "Press to run";
-  } else if (currentState == MENU && menuIndex == 6) {
-    topRowText = "Help";
-    hintText = "Press to open";
-  } else if (currentState == MENU && goalMinutes > 0 && menuIndex <= 2) {
-    topRowText = String(flowMinutes) + "/" + String(goalMinutes);
-    hintText = "Rotate / Press";
   } else if (currentState == SELECTING_DOWN_DURATION) {
     topRowText = "Set Min";
     hintText = "R:change  P:start";
@@ -533,13 +630,11 @@ void updateDisplay() {
         break;
     }
   } else if (currentState == MENU) {
-    if (menuIndex == 3) {
-      mainRowText = soundEnabled ? "ON" : "OFF";
-    } else {
-      mainRowText = menuOptions[menuIndex];
-    }
+    mainRowText = menuOptions[menuIndex];
+  } else if (currentState == SOUND_MENU) {
+    mainRowText = soundMenuValue ? "ON" : "OFF";
   } else if (currentState == COUNTING_UP) {
-    mainRowText = String(elapsedMinutes);
+    mainRowText = formatMinutesSeconds(elapsedSeconds);
   } else if (currentState == RESET_CONFIRM) {
     mainRowText = "RESET";
   } else if (currentState == COUNTING_DOWN) {
@@ -556,7 +651,7 @@ void updateDisplay() {
     mainRowSize = 3;
     mainRowX = centeredTextX(mainRowText, mainRowSize);
   }
-  if (currentState == COUNTING_DOWN) {
+  if (currentState == COUNTING_DOWN || currentState == COUNTING_UP) {
     mainRowSize = 4;
     mainRowX = centeredTextX(mainRowText, mainRowSize);
   }
@@ -598,47 +693,25 @@ void updateDisplay() {
 }
 
 //=========================================================
-// Detect button presses with debounce logic
-bool buttonPressed() {
-  bool isDown = (digitalRead(SW) == LOW);
-  if (isDown) lastSwitchLowMs = millis();
-  if (!isDown) {
-    buttonWasDown = false;
-    return false;
-  }
-
-  if (!buttonWasDown && (millis() - buttonDebounceTime > buttonDebounceDelay)) {
-    unsigned long now = millis();
-    buttonWasDown = true;
-    buttonDebounceTime = now;  // Debounce
-    lastActivityTime = now;  // Reset inactivity timer
-    rotaryIgnoreUntilMs = now + rotaryPressGuardDelay;  // Ignore tiny encoder movement during click
-    playButtonClick();
-    return true;
-  }
-  return false;
-}
-
-//=========================================================
 // Handle button presses and manage state transitions
 void handleButtonPresses(unsigned long currentMillis) {
-  if (!buttonPressed()) return;
+  if (!consumeShortSwitchClick()) return;
 
   switch (currentState) {
     case MENU:
       if (menuIndex == 0) {  // UP selected
         startCountingUp();
       } else if (menuIndex == 1) {  // DOWN selected
-        startSelectingDownDuration();
+        countdownValue = defaultCountdownMinutes;
+        inPomodoroBreak = false;
+        confirmCountdownSelection();
       } else if (menuIndex == 2) {  // Reset selected
         currentState = RESET_CONFIRM;
         resetArmed = true;
         resetArmedAtMs = millis();
       } else if (menuIndex == 3) {  // Sound on/off
-        soundEnabled = !soundEnabled;
-        saveAllSettings();
-        if (soundEnabled) playPreviewBeep();
-        Serial.print("Sound "); Serial.println(soundEnabled ? "ON" : "OFF");
+        currentState = SOUND_MENU;
+        soundMenuValue = soundEnabled;
       } else if (menuIndex == 4) {  // Setup
         currentState = SETTINGS;
         setupPage = 0;
@@ -648,7 +721,7 @@ void handleButtonPresses(unsigned long currentMillis) {
           startCountingUp();
         } else {
           inPomodoroBreak = false;
-          countdownValue = lastDownDuration;
+          countdownValue = defaultCountdownMinutes;
           confirmCountdownSelection();
         }
       } else if (menuIndex == 6) {  // Help
@@ -671,6 +744,14 @@ void handleButtonPresses(unsigned long currentMillis) {
       }
       break;
 
+    case SOUND_MENU:
+      soundEnabled = soundMenuValue;
+      saveAllSettings();
+      if (soundEnabled) playPreviewBeep();
+      currentState = MENU;
+      Serial.print("Sound "); Serial.println(soundEnabled ? "ON" : "OFF");
+      break;
+
     case RESET_CONFIRM:
       if (resetArmed && (millis() - resetArmedAtMs <= resetConfirmWindowMs)) {
         resetFlowMinutes();
@@ -678,7 +759,19 @@ void handleButtonPresses(unsigned long currentMillis) {
       currentState = MENU;
       resetArmed = false;
       break;
-      
+
+    case POWER_OFF_CONFIRM:
+      if (powerOffChoiceOk) {
+        currentState = IDLE;
+        idleStartTime = millis();
+        displayOff = true;
+        display.ssd1306_command(SSD1306_DISPLAYOFF);
+        Serial.println("Power off (confirmed): display blanked.");
+      } else {
+        currentState = MENU;
+      }
+      break;
+
     case SELECTING_DOWN_DURATION:
       confirmCountdownSelection();
       break;
@@ -694,15 +787,22 @@ void handleButtonPresses(unsigned long currentMillis) {
     case HELP:
       currentState = MENU;
       break;
+
+    default:
+      break;
   }
-  updateDisplay();
+
+  if (!(displayOff && currentState == IDLE)) updateDisplay();
 }
 
 //=========================================================
 // Start counting up
 void startCountingUp() {
+  ensureDisplayOn();
+  clearPostSessionReminder();
   currentState = COUNTING_UP;
   elapsedMinutes = 0;
+  elapsedSeconds = 0;
   isCounting = true;
   previousMillis = millis();
   inPomodoroBreak = false;
@@ -728,10 +828,12 @@ void startSelectingDownDuration() {
 // Confirm countdown selection and start counting down
 void confirmCountdownSelection() {
   // If a tiny accidental rotate happened right before press, keep previous selected value.
-  if (millis() - lastSelectRotateMs <= rotaryPressGuardDelay) {
+  if (currentState == SELECTING_DOWN_DURATION && (millis() - lastSelectRotateMs <= rotaryPressGuardDelay)) {
     countdownValue = max(1, lastSelectValueBeforeRotate);
   }
 
+  ensureDisplayOn();
+  clearPostSessionReminder();
   if (!inPomodoroBreak) {
     lastMode = 1;
     lastDownDuration = countdownValue;
@@ -751,13 +853,15 @@ void confirmCountdownSelection() {
 // Stop counting up and return to menu
 void stopCountingUp() {
   int previousFlow = flowMinutes;
-  flowMinutes += elapsedMinutes;
+  flowMinutes += (elapsedSeconds / 60);
   bumpSessionCount();
   checkGoalCelebration(previousFlow);
   successAnimation();
   currentState = MENU;
   isCounting = false;
   inPomodoroBreak = false;
+  lastActivityTime = millis();
+  armPostSessionReminder();
   Serial.println("Counting UP stopped. Returning to MENU.");
 }
 
@@ -775,6 +879,8 @@ void stopCountingDown() {
   currentState = MENU;
   isCounting = false;
   inPomodoroBreak = false;
+  lastActivityTime = millis();
+  armPostSessionReminder();
   Serial.println("Counting DOWN stopped. Returning to MENU.");
 }
 
@@ -793,19 +899,30 @@ void handleCounting(unsigned long currentMillis) {
   if (!isCounting) return;
   
   if (currentState == COUNTING_UP) {
-    if (currentMillis - previousMillis < 60000) return;
+    if (currentMillis - previousMillis < 1000) return;
     previousMillis = currentMillis;
-    elapsedMinutes++;
-    if (milestoneInterval > 0 && (elapsedMinutes % milestoneInterval == 0)) {
+    lastActivityTime = currentMillis;
+    elapsedSeconds++;
+    if (elapsedSeconds % 60 == 0) {
+      elapsedMinutes++;
+    }
+    if (milestoneInterval > 0 && elapsedMinutes > 0 && (elapsedMinutes % milestoneInterval == 0) && (elapsedSeconds % 60 == 0)) {
       playMilestoneTone();
     }
     updateDisplay();
-    Serial.print("Counting UP: "); Serial.println(elapsedMinutes);
+    Serial.print("Counting UP: "); Serial.println(formatMinutesSeconds(elapsedSeconds));
   } else if (currentState == COUNTING_DOWN) {
     if (currentMillis - previousMillis < 1000) return;
     previousMillis = currentMillis;
+    lastActivityTime = currentMillis;
     countdownSeconds = max(0, countdownSeconds - 1);
-    if (countdownSeconds > 0 && countdownSeconds <= 5) {
+    if (countdownSeconds > 0 && countdownSeconds % 60 == 0) {
+      elapsedMinutes++;
+      if (milestoneInterval > 0 && (elapsedMinutes % milestoneInterval == 0)) {
+        playMilestoneTone();
+      }
+    }
+    if (countdownSeconds > 0 && countdownSeconds <= 5 && !inPomodoroBreak) {
       playLastSecondsBeep();
     }
     if (countdownSeconds <= 0) {
@@ -814,6 +931,8 @@ void handleCounting(unsigned long currentMillis) {
         successAnimation();
         currentState = MENU;
         isCounting = false;
+        lastActivityTime = currentMillis;
+        armPostSessionReminder();
         Serial.println("Break finished, returning to MENU.");
       } else {
         int previousFlow = flowMinutes;
@@ -829,17 +948,20 @@ void handleCounting(unsigned long currentMillis) {
           currentState = COUNTING_DOWN;
           isCounting = true;
           previousMillis = currentMillis;
+          lastActivityTime = currentMillis;
           playSessionStartTone();
           Serial.println("Pomodoro break started.");
         } else {
           currentState = MENU;
           isCounting = false;
+          lastActivityTime = currentMillis;
+          armPostSessionReminder();
           Serial.println("Countdown finished, returning to MENU.");
         }
       }
     }
     updateDisplay();
-    Serial.print("Counting DOWN: "); Serial.println(formatMinutesSeconds(countdownSeconds));
+    Serial.print("Counting: "); Serial.println(formatMinutesSeconds(countdownSeconds));
   }
 }
 
@@ -856,6 +978,16 @@ void successAnimation() {
     display.display();
     playSuccessMelody();
     delay(500);
+    display.clearDisplay();
+    display.setTextSize(2);
+    String s1 = "Min: " + String(flowMinutes);
+    String s2 = "Sess: " + String(sessionCount);
+    display.setCursor(centeredTextX(s1, 2), 18);
+    display.print(s1);
+    display.setCursor(centeredTextX(s2, 2), 42);
+    display.print(s2);
+    display.display();
+    delay(1600);
     display.clearDisplay();
     display.display();
     return;
@@ -883,7 +1015,17 @@ void successAnimation() {
   display.print("SUCCESS!");
   display.display();
   playSuccessMelody();
-  delay(1000);
+  delay(700);
+  display.clearDisplay();
+  display.setTextSize(2);
+  String s1 = "Min: " + String(flowMinutes);
+  String s2 = "Sess: " + String(sessionCount);
+  display.setCursor(centeredTextX(s1, 2), 18);
+  display.print(s1);
+  display.setCursor(centeredTextX(s2, 2), 42);
+  display.print(s2);
+  display.display();
+  delay(1600);
   display.clearDisplay();
   display.display();
 }
@@ -983,6 +1125,11 @@ void handleRotaryInput() {
         break;
     }
     updateDisplay();
+  } else if (currentState == SOUND_MENU) {
+    if (rotation != 0) {
+      soundMenuValue = !soundMenuValue;
+      updateDisplay();
+    }
   } else if (currentState == RESET_CONFIRM) {
     resetArmed = false;
     currentState = MENU;
@@ -995,6 +1142,8 @@ void handleRotaryInput() {
 //=========================================================
 // Handle inactivity and switch to IDLE if necessary
 void handleInactivity(unsigned long currentMillis) {
+  if (isCounting) return;  // Active session means device is in use
+
   // Comment out frequent serial prints to improve performance
   /*
   Serial.print(millis());
@@ -1006,35 +1155,15 @@ void handleInactivity(unsigned long currentMillis) {
   Serial.println(lastActivityTime);
   */
 
-  // Make sure the subtraction does not cause an overflow/underflow
-  if (currentMillis >= lastActivityTime) {
-    unsigned long timeSinceLastActivity = currentMillis - lastActivityTime;
-
-    /*
-    Serial.print(millis());
-    Serial.print(" - Time since last activity (ms): ");
-    Serial.println(timeSinceLastActivity);
-    */
-
-    // Check if the user is in the MENU or selecting countdown duration mode
-    if ((currentState == MENU || currentState == SELECTING_DOWN_DURATION || currentState == SETTINGS || currentState == HELP) &&
-        (timeSinceLastActivity > inactivityLimitMs)) {
-      if (currentState != IDLE) {
-        if (currentState == SETTINGS) {
-          saveAllSettings();
-          recomputeTimeLimits();
-        }
-        currentState = IDLE;
-        idleStartTime = millis();  // Record when IDLE mode starts
-        playIdleTone();
-        updateDisplay();
-        Serial.print(millis());  // Print the current time in milliseconds
-        Serial.println(" - IDLE state entered due to inactivity.");
-      }
-    }
-  } else {
-    // Comment out warning to reduce unnecessary serial prints
-    // Serial.println(" - Warning: currentMillis is less than lastActivityTime!");
+  // Post-session IDLE reminder: only after a finished session (incl. break), Menu idle preset elapsed without starting new session.
+  if (postSessionReminderPending && currentState == MENU &&
+      currentMillis >= sessionEndedAtMs &&
+      (currentMillis - sessionEndedAtMs >= inactivityLimitMs)) {
+    currentState = IDLE;
+    idleStartTime = millis();
+    playIdleTone();
+    updateDisplay();
+    Serial.println(" - IDLE: post-session reminder (start a new session).");
   }
 
   if (currentState == IDLE && !displayOff && (currentMillis - idleStartTime > displayOffTimeLimitMs)) {
@@ -1044,22 +1173,20 @@ void handleInactivity(unsigned long currentMillis) {
     Serial.println(" - Display turned off after IDLE timeout.");
   }
 
-  // Exit IDLE if any rotary or button action happens
-  if (currentState == IDLE && (getRotation() != 0 || buttonPressed())) {
+  // Exit IDLE on encoder motion or switch press (falling edge before release-click is handled).
+  if (currentState == IDLE && (getRotation() != 0 || switchFallingEdge)) {
+    clearPostSessionReminder();
     currentState = MENU;
-    lastActivityTime = millis();  // Reset inactivity timer upon exiting IDLE
-    wakeConsumedAction = true;    // Wake only, ignore first action
-    
-    // Turn the display back on if it was off
+    lastActivityTime = millis();
+    wakeConsumedAction = true;
+
     if (displayOff) {
       display.ssd1306_command(SSD1306_DISPLAYON);
       displayOff = false;
-      Serial.print(millis());  // Print the current time in milliseconds
       Serial.println(" - Display turned back on.");
     }
 
     updateDisplay();
-    Serial.print(millis());  // Print the current time in milliseconds
     Serial.println(" - Exiting IDLE mode. Back to MENU.");
   }
 }
