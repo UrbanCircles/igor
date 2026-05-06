@@ -142,8 +142,9 @@ const char *helpLines[] = {
   "SOUND: tone on/off",
   "SET: defaults/goal",
   "RESET: confirm",
-  "IDLE: post-session hint",
-  "Long press: turn off?"
+  "IDLE: post-session",
+  "Idle time -> hint",
+  "HOLD switch: off?"
 };
 const int helpLineCount = sizeof(helpLines) / sizeof(helpLines[0]);
 
@@ -196,6 +197,7 @@ void initHardware() {
   pinMode(SW, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
+  switchReadingLow = (digitalRead(SW) == LOW);
   Serial.begin(9600);
 }
 
@@ -562,6 +564,9 @@ void updateDisplay() {
   } else if (currentState == RESET_CONFIRM) {
     topRowText = "Reset";
     hintText = "Press=Yes  Rotate=No";
+  } else if (currentState == POWER_OFF_CONFIRM) {
+    topRowText = "Turn off?";
+    hintText = "Rotate  Press";
   } else if (currentState == SELECTING_DOWN_DURATION) {
     topRowText = "Set Min";
     hintText = "R:change  P:start";
@@ -637,6 +642,8 @@ void updateDisplay() {
     mainRowText = formatMinutesSeconds(elapsedSeconds);
   } else if (currentState == RESET_CONFIRM) {
     mainRowText = "RESET";
+  } else if (currentState == POWER_OFF_CONFIRM) {
+    mainRowText = powerOffChoiceOk ? "OK" : "CNCL";
   } else if (currentState == COUNTING_DOWN) {
     mainRowText = formatMinutesSeconds(countdownSeconds);
   } else if (currentState == SELECTING_DOWN_DURATION) {
@@ -885,12 +892,15 @@ void stopCountingDown() {
 }
 
 //=========================================================
-// Reset the total flow minutes counter to 0
+// Reset flow minutes and session count to 0 (Reset menu confirm)
 void resetFlowMinutes() {
   flowMinutes = 0;
+  sessionCount = 0;
   goalCelebrated = false;
-  Serial.println("Flow minutes reset to 0.");
-  updateDisplay();  // Update the display to show the reset value
+  clearPostSessionReminder();
+  saveAllSettings();
+  Serial.println("Flow minutes and session count reset to 0.");
+  updateDisplay();
 }
 
 //=========================================================
@@ -1130,6 +1140,12 @@ void handleRotaryInput() {
       soundMenuValue = !soundMenuValue;
       updateDisplay();
     }
+  } else if (currentState == POWER_OFF_CONFIRM) {
+    if (rotation != 0) {
+      powerOffChoiceOk = !powerOffChoiceOk;
+      playRotateTick();
+    }
+    updateDisplay();
   } else if (currentState == RESET_CONFIRM) {
     resetArmed = false;
     currentState = MENU;
